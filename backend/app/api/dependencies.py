@@ -15,16 +15,22 @@ async def get_current_user_id(
     Extract user_id from JWT token if present.
     Returns None for anonymous users.
     """
+    print(f"[DEBUG] get_current_user_id - credentials present: {credentials is not None}")
     if not credentials:
+        print("[DEBUG] get_current_user_id - No credentials, returning None")
         return None
 
     try:
+        print(f"[DEBUG] get_current_user_id - Token: {credentials.credentials[:20]}...")
         payload = verify_token(credentials.credentials)
         user_id = payload.get("sub")
+        print(f"[DEBUG] get_current_user_id - Extracted user_id: {user_id}")
         if not user_id:
+            print("[DEBUG] get_current_user_id - No user_id in payload, returning None")
             return None
         return user_id
-    except HTTPException:
+    except HTTPException as e:
+        print(f"[DEBUG] get_current_user_id - HTTPException: {e.detail}")
         return None
 
 

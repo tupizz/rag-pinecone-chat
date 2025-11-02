@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status, Cookie
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime, timezone
@@ -27,20 +27,33 @@ async def send_message(
     request: ChatRequest,
     response: Response,
     user_id: Optional[str] = Depends(get_current_user_id),
+    session_id_cookie: Optional[str] = Cookie(
+        None, alias=settings.ANONYMOUS_SESSION_COOKIE_NAME
+    ),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Send a message and get AI response.
     Creates a new session if session_id is not provided.
+    For authenticated users: ignores anonymous session cookie
+    For anonymous users: Session ID priority: 1) Request body, 2) Cookie, 3) Generate new
     """
-    session_id = request.session_id
+    # Get session_id:
+    # - For authenticated users: Use request.session_id or generate new (ignore cookie)
+    # - For anonymous users: Use request.session_id, cookie, or generate new
+    if user_id:
+        # Authenticated user - ignore anonymous session cookie
+        session_id = request.session_id or str(uuid.uuid4())
+    else:
+        # Anonymous user - use cookie
+        session_id = request.session_id or session_id_cookie or str(uuid.uuid4())
 
-    # Create new session if needed
-    if not session_id:
-        session_id = str(uuid.uuid4())
+    # Create new session if it doesn't exist in database
+    existing_session = await db.sessions.find_one({"session_id": session_id})
+    if not existing_session:
         session_doc = {
             "session_id": session_id,
-            "user_id": user_id,
+            "user_id": user_id,  # Will be None for anonymous, user_id for authenticated
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
             "title": None,
@@ -49,13 +62,17 @@ async def send_message(
 
         # Set session cookie for anonymous users
         if not user_id:
+            # Environment-aware cookie settings:
+            # - Development: secure=False, samesite="lax" (for localhost-only testing)
+            # - Production: secure=True, samesite="none" (for cross-origin: localhost → AWS)
+            is_production = settings.ENVIRONMENT == "production"
             response.set_cookie(
                 key=settings.ANONYMOUS_SESSION_COOKIE_NAME,
                 value=session_id,
                 max_age=settings.ANONYMOUS_SESSION_MAX_AGE,
                 httponly=True,
-                secure=True,  # Required for HTTPS and cross-origin
-                samesite="none",  # Allow cross-origin cookies (localhost → AWS)
+                secure=is_production,
+                samesite="none" if is_production else "lax",
             )
     else:
         # Verify session exists and belongs to user
@@ -119,12 +136,14 @@ async def send_message(
             else:
                 clean_metadata[k] = str(v)
 
-        serialized_sources.append({
-            "id": str(src.get("id", "")),
-            "score": float(src.get("score", 0.0)),
-            "text": str(src.get("text", "")),
-            "metadata": clean_metadata
-        })
+        serialized_sources.append(
+            {
+                "id": str(src.get("id", "")),
+                "score": float(src.get("score", 0.0)),
+                "text": str(src.get("text", "")),
+                "metadata": clean_metadata,
+            }
+        )
 
     assistant_timestamp = datetime.now(timezone.utc)
     assistant_message = ChatMessage(
@@ -146,7 +165,8 @@ async def send_message(
 
     # Update session metadata (title and timestamp only)
     await db.sessions.update_one(
-        {"session_id": session_id}, {"$set": {"updated_at": assistant_timestamp, "title": title}}
+        {"session_id": session_id},
+        {"$set": {"updated_at": assistant_timestamp, "title": title}},
     )
 
     # Use Pydantic for proper serialization with clean data
@@ -157,48 +177,58 @@ async def send_message(
     )
 
     # Use Pydantic's JSON-safe serialization (timezone-aware datetimes auto-include TZ)
-    return response.model_dump(mode='json')
+    return response.model_dump(mode="json")
 
 
 @router.post("/stream")
 async def send_message_stream(
     request: ChatRequest,
-    response: Response,
     user_id: Optional[str] = Depends(get_current_user_id),
+    session_id_cookie: Optional[str] = Cookie(
+        None, alias=settings.ANONYMOUS_SESSION_COOKIE_NAME
+    ),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ):
     """
     Send a message and get streaming AI response.
+    Session ID priority: 1) Request body, 2) Cookie, 3) Generate new
     """
-    session_id = request.session_id
+    print(f"[DEBUG] POST /chat/stream - user_id: {user_id}, request.session_id: {request.session_id}, cookie: {session_id_cookie}")
 
-    # Similar session creation/validation logic as above
-    if not session_id:
-        session_id = str(uuid.uuid4())
+    # Get session_id:
+    # - For authenticated users: Use request.session_id or generate new (ignore cookie)
+    # - For anonymous users: Use request.session_id, cookie, or generate new
+    if user_id:
+        # Authenticated user - ignore anonymous session cookie
+        session_id = request.session_id or str(uuid.uuid4())
+    else:
+        # Anonymous user - use cookie
+        session_id = request.session_id or session_id_cookie or str(uuid.uuid4())
+
+    print(f"[DEBUG] Using session_id: {session_id}")
+
+    # Track if we need to set a new cookie
+    should_set_cookie = False
+
+    # Create new session if it doesn't exist in database
+    session_doc = await db.sessions.find_one({"session_id": session_id})
+    if not session_doc:
+        print(f"[DEBUG] Creating new session with session_id: {session_id}, user_id: {user_id}")
         session_doc = {
             "session_id": session_id,
-            "user_id": user_id,
+            "user_id": user_id,  # Will be None for anonymous, user_id for authenticated
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
             "title": None,
         }
         await db.sessions.insert_one(session_doc)
+        print(f"[DEBUG] Session created successfully")
 
+        # Mark that we need to set cookie (only for anonymous users)
         if not user_id:
-            response.set_cookie(
-                key=settings.ANONYMOUS_SESSION_COOKIE_NAME,
-                value=session_id,
-                max_age=settings.ANONYMOUS_SESSION_MAX_AGE,
-                httponly=True,
-                secure=True,  # Required for HTTPS and cross-origin
-                samesite="none",  # Allow cross-origin cookies (localhost → AWS)
-            )
+            should_set_cookie = True
     else:
-        session_doc = await db.sessions.find_one({"session_id": session_id})
-        if not session_doc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
-            )
+        print(f"[DEBUG] Found existing session: {session_doc.get('session_id')}, user_id: {session_doc.get('user_id')}")
 
     # Get recent conversation history (last 10 messages for AI context)
     recent_messages = (
@@ -273,12 +303,14 @@ async def send_message_stream(
                 else:
                     clean_metadata[k] = str(v)
 
-            serialized_sources.append({
-                "id": str(src.get("id", "")),
-                "score": float(src.get("score", 0.0)),
-                "text": str(src.get("text", "")),
-                "metadata": clean_metadata
-            })
+            serialized_sources.append(
+                {
+                    "id": str(src.get("id", "")),
+                    "score": float(src.get("score", 0.0)),
+                    "text": str(src.get("text", "")),
+                    "metadata": clean_metadata,
+                }
+            )
 
         assistant_timestamp = datetime.now(timezone.utc)
         assistant_message = ChatMessage(
@@ -291,24 +323,42 @@ async def send_message_stream(
 
         title = session_doc.get("title")
         if not title and len(conversation_history) == 0:
-            title = await chat_service.generate_session_title(request.message)
+            title = await chat_service.generate_session_title(
+                request.message if user_id else "Nonauthenticated messages"
+            )
 
         # Insert messages to messages collection
         await db.messages.insert_many([user_message.dict(), assistant_message.dict()])
 
         # Update session metadata (title and timestamp only)
         await db.sessions.update_one(
-            {"session_id": session_id}, {"$set": {"updated_at": assistant_timestamp, "title": title}}
+            {"session_id": session_id},
+            {"$set": {"updated_at": assistant_timestamp, "title": title}},
         )
+
+    # Prepare headers for streaming response
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",  # Disable buffering in nginx/proxies
+    }
+
+    # Set cookie header if needed (for anonymous users with new sessions)
+    if should_set_cookie:
+        is_production = settings.ENVIRONMENT == "production"
+        secure_flag = "; Secure" if is_production else ""
+        samesite_value = "None" if is_production else "Lax"
+        cookie_value = (
+            f"{settings.ANONYMOUS_SESSION_COOKIE_NAME}={session_id}; "
+            f"Max-Age={settings.ANONYMOUS_SESSION_MAX_AGE}; "
+            f"Path=/; HttpOnly{secure_flag}; SameSite={samesite_value}"
+        )
+        headers["Set-Cookie"] = cookie_value
 
     return StreamingResponse(
         generate_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable buffering in nginx/proxies
-        },
+        headers=headers,
     )
 
 
@@ -322,6 +372,9 @@ async def list_sessions(
     List all sessions for the current user.
     For anonymous users, returns only their current session.
     """
+    # Debug logging
+    print(f"[DEBUG] GET /sessions - user_id: {user_id}, session_id: {session_id}")
+
     if user_id:
         # Authenticated user - return all their sessions
         sessions = (
@@ -331,7 +384,10 @@ async def list_sessions(
         )
     else:
         # Anonymous user - return only current session
-        sessions = await db.sessions.find({"session_id": session_id}).to_list(length=1)
+        query = {"session_id": session_id}
+        print(f"[DEBUG] Anonymous user query: {query}")
+        sessions = await db.sessions.find(query).to_list(length=1)
+        print(f"[DEBUG] Found {len(sessions)} sessions")
 
     # Format response with message metadata from messages collection
     session_list = []
@@ -364,7 +420,8 @@ async def list_sessions(
         )
 
     response = SessionListResponse(sessions=session_list)
-    return response.model_dump(mode='json')
+    print(f"[DEBUG] Returning {len(session_list)} sessions: {session_list}")
+    return response.model_dump(mode="json")
 
 
 @router.get("/sessions/{session_id}/messages", response_model=SessionMessagesResponse)
@@ -408,7 +465,9 @@ async def get_session_messages(
             query["timestamp"] = {"$lt": cursor_message["timestamp"]}
 
     # Fetch messages with pagination (sort by timestamp DESC, then _id DESC for consistent ordering)
-    messages_cursor = db.messages.find(query).sort([("timestamp", -1), ("_id", -1)]).limit(limit + 1)
+    messages_cursor = (
+        db.messages.find(query).sort([("timestamp", -1), ("_id", -1)]).limit(limit + 1)
+    )
     messages_list = await messages_cursor.to_list(length=limit + 1)
 
     # Check if there are more messages
@@ -451,7 +510,7 @@ async def get_session_messages(
     )
 
     # Use Pydantic serialization (timezone-aware datetimes auto-include TZ)
-    return response.model_dump(mode='json')
+    return response.model_dump(mode="json")
 
 
 @router.delete("/sessions/{session_id}")

@@ -89,18 +89,6 @@ export function Sidebar({
             <div className="text-center py-8">
               <Text>Loading...</Text>
             </div>
-          ) : !isAuthenticated && !hasActiveSession ? (
-            <div className="text-center py-8 space-y-2">
-              <Text>No conversations yet</Text>
-              <Text className="!text-xs">Start chatting to create one!</Text>
-            </div>
-          ) : !isAuthenticated && hasActiveSession ? (
-            <div className="p-3 rounded-lg bg-zinc-950/5 dark:bg-white/5 border-l-2 border-indigo-500">
-              <Strong className="text-sm block">Current Chat</Strong>
-              <Text className="!text-xs mt-1">
-                Sign in to save your conversations
-              </Text>
-            </div>
           ) : !Array.isArray(sessions) || sessions.length === 0 ? (
             <div className="text-center py-8 space-y-2">
               <Text>No conversations yet</Text>
