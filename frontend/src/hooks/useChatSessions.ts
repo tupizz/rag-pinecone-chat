@@ -9,14 +9,14 @@ export function useChatSessions(isAuthenticated: boolean) {
   const queryClient = useQueryClient();
   const [currentSessionId, setCurrentSessionId] = useState<string | undefined>();
 
-  // Fetch sessions with React Query
+  // Fetch sessions with React Query (works for both authenticated and anonymous users)
   const {
     data: sessions = [],
     isLoading: sessionsLoading
   } = useQuery({
     queryKey: ['sessions'],
     queryFn: () => apiClient.getSessions(),
-    enabled: isAuthenticated,
+    enabled: true, // Always fetch - backend handles anonymous sessions via cookies
     staleTime: 30 * 1000, // 30 seconds
   });
 
@@ -60,13 +60,11 @@ export function useChatSessions(isAuthenticated: boolean) {
     },
   });
 
-  // Invalidate sessions after message sent
+  // Invalidate sessions after message sent (works for both authenticated and anonymous)
   const invalidateSessions = () => {
-    if (isAuthenticated) {
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['sessions'] });
-      }, 500);
-    }
+    setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    }, 500);
   };
 
   const selectSession = (sessionId: string) => {

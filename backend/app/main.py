@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
+# from fastapi.middleware.gzip import GZipMiddleware  # Disabled - breaks streaming
 from contextlib import asynccontextmanager
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -63,8 +63,10 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Add compression middleware (for responses >= 1KB)
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+# NOTE: GZipMiddleware is disabled because it buffers streaming responses
+# This prevents Server-Sent Events (SSE) from working properly
+# Most modern proxies/CDNs handle compression anyway
+# app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Add request tracking middleware (before CORS)
 app.add_middleware(RequestTrackingMiddleware)

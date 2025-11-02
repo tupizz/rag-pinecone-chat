@@ -54,7 +54,8 @@ async def send_message(
                 value=session_id,
                 max_age=settings.ANONYMOUS_SESSION_MAX_AGE,
                 httponly=True,
-                samesite="lax",
+                secure=True,  # Required for HTTPS and cross-origin
+                samesite="none",  # Allow cross-origin cookies (localhost → AWS)
             )
     else:
         # Verify session exists and belongs to user
@@ -189,7 +190,8 @@ async def send_message_stream(
                 value=session_id,
                 max_age=settings.ANONYMOUS_SESSION_MAX_AGE,
                 httponly=True,
-                samesite="lax",
+                secure=True,  # Required for HTTPS and cross-origin
+                samesite="none",  # Allow cross-origin cookies (localhost → AWS)
             )
     else:
         session_doc = await db.sessions.find_one({"session_id": session_id})
@@ -226,8 +228,8 @@ async def send_message_stream(
     async def generate_stream():
         import json
 
-        # Send session_id first
-        yield f"data: {{'session_id': '{session_id}'}}\n\n"
+        # Send session_id first (proper JSON format)
+        yield f"data: {json.dumps({'session_id': session_id})}\n\n"
 
         full_response = ""
         sources = []
@@ -299,7 +301,15 @@ async def send_message_stream(
             {"session_id": session_id}, {"$set": {"updated_at": assistant_timestamp, "title": title}}
         )
 
-    return StreamingResponse(generate_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable buffering in nginx/proxies
+        },
+    )
 
 
 @router.get("/sessions", response_model=SessionListResponse)

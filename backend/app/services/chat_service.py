@@ -103,16 +103,16 @@ Always be professional, clear, and concise in your responses."""
             stream=True
         )
 
-        # First, send sources as JSON
-        yield json.dumps({"type": "sources", "data": retrieved_docs}) + "\n"
+        # First, send sources as JSON (no trailing newline - API will add SSE format)
+        yield json.dumps({"type": "sources", "data": retrieved_docs})
 
-        # Then stream the response
+        # Then stream the response (no trailing newline - API will add SSE format)
         async for chunk in stream:
             if chunk.choices[0].delta.content:
                 yield json.dumps({
                     "type": "content",
                     "data": chunk.choices[0].delta.content
-                }) + "\n"
+                })
 
     def _format_context(self, retrieved_docs: List[Dict[str, Any]]) -> str:
         """Format retrieved documents into context string."""
