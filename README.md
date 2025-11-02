@@ -359,11 +359,3 @@ docker compose logs mongodb
 ## License
 
 MIT License - see LICENSE file for details
-
-## Contact & Support
-
-For questions about this technical assignment, please reach out to the Eloquent AI team.
-
----
-
-Built with ❤️ for Eloquent AI Technical Assignment
