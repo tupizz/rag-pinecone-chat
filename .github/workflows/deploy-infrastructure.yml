@@ -1,4 +1,4 @@
-name: Deploy Backend to AWS ECS
+name: Deploy Infrastructure (CDK)
 
 on:
   push:
@@ -6,17 +6,17 @@ on:
       - main
       - master
     paths:
-      - 'backend/**'
-      - '.github/workflows/deploy-backend.yml'
+      - 'infrastructure/**'
+      - '.github/workflows/deploy-infrastructure.yml'
   workflow_dispatch:  # Allow manual trigger
 
 env:
   AWS_REGION: us-east-1
-  ENVIRONMENT: dev  # Changed from prod to match your current deployment
+  ENVIRONMENT: dev
 
 jobs:
   deploy:
-    name: Build and Deploy
+    name: Deploy CDK Infrastructure
     runs-on: ubuntu-latest
     permissions:
       id-token: write  # Required for OIDC
@@ -32,48 +32,42 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Get ECR repository URI
-        id: ecr-uri
-        run: |
-          ECR_REPO_URI=$(aws cloudformation describe-stacks \
-            --stack-name "Eloquent-ECR-${{ env.ENVIRONMENT }}" \
-            --query 'Stacks[0].Outputs[?OutputKey==`RepositoryUri`].OutputValue' \
-            --output text)
-          echo "ECR_REPO_URI=$ECR_REPO_URI" >> $GITHUB_OUTPUT
-          echo "Repository URI: $ECR_REPO_URI"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          context: .
-          file: ./backend/Dockerfile
-          target: production
-          push: true
-          tags: |
-            ${{ steps.ecr-uri.outputs.ECR_REPO_URI }}:latest
-            ${{ steps.ecr-uri.outputs.ECR_REPO_URI }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: infrastructure/package-lock.json
 
-      - name: Update ECS service
-        run: |
-          aws ecs update-service \
-            --cluster eloquent-cluster-${{ env.ENVIRONMENT }} \
-            --service eloquent-backend-${{ env.ENVIRONMENT }} \
-            --force-new-deployment \
-            --region ${{ env.AWS_REGION }}
+      - name: Install CDK dependencies
+        working-directory: infrastructure
+        run: npm ci
 
-      - name: Wait for service stability
+      - name: CDK Synth
+        working-directory: infrastructure
         run: |
-          echo "Waiting for service to stabilize..."
+          export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          export CDK_DEFAULT_REGION=${{ env.AWS_REGION }}
+          export ENVIRONMENT=${{ env.ENVIRONMENT }}
+          export ENABLE_DNS=true
+          export DOMAIN_NAME=tadeutupinamba.com
+          export SUBDOMAIN_NAME=api
+          npx cdk synth
+
+      - name: CDK Deploy
+        working-directory: infrastructure
+        run: |
+          export CDK_DEFAULT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          export CDK_DEFAULT_REGION=${{ env.AWS_REGION }}
+          export ENVIRONMENT=${{ env.ENVIRONMENT }}
+          export ENABLE_DNS=true
+          export DOMAIN_NAME=tadeutupinamba.com
+          export SUBDOMAIN_NAME=api
+          npx cdk deploy EloquentEcsStack --require-approval never
+
+      - name: Wait for ECS service stability
+        run: |
+          echo "Waiting for ECS service to stabilize..."
           aws ecs wait services-stable \
             --cluster eloquent-cluster-${{ env.ENVIRONMENT }} \
             --services eloquent-backend-${{ env.ENVIRONMENT }} \
@@ -82,12 +76,12 @@ jobs:
       - name: Get service URL
         id: service-url
         run: |
-          LOAD_BALANCER_DNS=$(aws cloudformation describe-stacks \
+          SERVICE_URL=$(aws cloudformation describe-stacks \
             --stack-name "Eloquent-ECS-${{ env.ENVIRONMENT }}" \
-            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+            --query 'Stacks[0].Outputs[?OutputKey==`ServiceUrl`].OutputValue' \
             --output text)
-          echo "SERVICE_URL=http://$LOAD_BALANCER_DNS" >> $GITHUB_OUTPUT
-          echo "Service URL: http://$LOAD_BALANCER_DNS"
+          echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_OUTPUT
+          echo "Service URL: $SERVICE_URL"
 
       - name: Test health endpoint
         run: |
@@ -113,11 +107,10 @@ jobs:
       - name: Deployment summary
         if: success()
         run: |
-          echo "### ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Infrastructure Deployment Successful" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Environment:** ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image:** ${{ steps.ecr-uri.outputs.ECR_REPO_URI }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Service URL:** ${{ steps.service-url.outputs.SERVICE_URL }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Quick Links" >> $GITHUB_STEP_SUMMARY
