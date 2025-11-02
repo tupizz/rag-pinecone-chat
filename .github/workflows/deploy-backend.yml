@@ -1,0 +1,126 @@
+name: Deploy Backend to AWS ECS
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: prod
+
+jobs:
+  deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Required for OIDC
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get ECR repository URI
+        id: ecr-uri
+        run: |
+          ECR_REPO_URI=$(aws cloudformation describe-stacks \
+            --stack-name "Eloquent-ECR-${{ env.ENVIRONMENT }}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`RepositoryUri`].OutputValue' \
+            --output text)
+          echo "ECR_REPO_URI=$ECR_REPO_URI" >> $GITHUB_OUTPUT
+          echo "Repository URI: $ECR_REPO_URI"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          target: production
+          push: true
+          tags: |
+            ${{ steps.ecr-uri.outputs.ECR_REPO_URI }}:latest
+            ${{ steps.ecr-uri.outputs.ECR_REPO_URI }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster eloquent-cluster-${{ env.ENVIRONMENT }} \
+            --service eloquent-backend-${{ env.ENVIRONMENT }} \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for service stability
+        run: |
+          echo "Waiting for service to stabilize..."
+          aws ecs wait services-stable \
+            --cluster eloquent-cluster-${{ env.ENVIRONMENT }} \
+            --services eloquent-backend-${{ env.ENVIRONMENT }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Get service URL
+        id: service-url
+        run: |
+          LOAD_BALANCER_DNS=$(aws cloudformation describe-stacks \
+            --stack-name "Eloquent-ECS-${{ env.ENVIRONMENT }}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+            --output text)
+          echo "SERVICE_URL=http://$LOAD_BALANCER_DNS" >> $GITHUB_OUTPUT
+          echo "Service URL: http://$LOAD_BALANCER_DNS"
+
+      - name: Test health endpoint
+        run: |
+          SERVICE_URL="${{ steps.service-url.outputs.SERVICE_URL }}"
+          echo "Testing health endpoint: $SERVICE_URL/health"
+
+          # Wait for ALB to update
+          sleep 30
+
+          # Test health endpoint with retries
+          for i in {1..5}; do
+            if curl -f -s "$SERVICE_URL/health"; then
+              echo "✅ Health check passed"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "❌ Health check failed after 5 attempts"
+          exit 1
+
+      - name: Deployment summary
+        if: success()
+        run: |
+          echo "### ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** ${{ steps.ecr-uri.outputs.ECR_REPO_URI }}:${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service URL:** ${{ steps.service-url.outputs.SERVICE_URL }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Quick Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [Health Check](${{ steps.service-url.outputs.SERVICE_URL }}/health)" >> $GITHUB_STEP_SUMMARY
+          echo "- [API Docs](${{ steps.service-url.outputs.SERVICE_URL }}/docs)" >> $GITHUB_STEP_SUMMARY
+          echo "- [CloudWatch Logs](https://console.aws.amazon.com/cloudwatch/home?region=${{ env.AWS_REGION }}#logsV2:log-groups/log-group//ecs/eloquent-backend-${{ env.ENVIRONMENT }})" >> $GITHUB_STEP_SUMMARY

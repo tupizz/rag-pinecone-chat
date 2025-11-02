@@ -1,0 +1,77 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: eloquent-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: eloquent_chatbot
+    networks:
+      - eloquent-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: ./backend/Dockerfile
+      target: development
+    container_name: eloquent-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - MONGODB_URL=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=eloquent_chatbot
+      - INGEST_FAQ=false
+      - ALLOWED_ORIGINS_STR=http://localhost:3000,http://localhost:8000
+    depends_on:
+      - mongodb
+    volumes:
+      - ./backend/app:/app/app
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+    networks:
+      - eloquent-network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import requests; requests.get('http://localhost:8000/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #     target: development
+  #   container_name: eloquent-frontend
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+  #   volumes:
+  #     - ./frontend:/app
+  #     - /app/node_modules
+  #     - /app/.next
+  #   depends_on:
+  #     - backend
+  #   networks:
+  #     - eloquent-network
+
+volumes:
+  mongodb_data:
+
+networks:
+  eloquent-network:
+    driver: bridge
