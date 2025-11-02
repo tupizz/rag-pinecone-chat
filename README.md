@@ -2,6 +2,8 @@
 
 A full-stack AI-powered chatbot application with Retrieval-Augmented Generation (RAG) for answering fintech customer support questions. Built with FastAPI, Next.js, OpenAI, Pinecone, and MongoDB.
 
+version: 1.0.0
+
 ## Architecture Overview
 
 - **Backend**: FastAPI (Python) with async support
