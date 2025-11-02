@@ -82,12 +82,12 @@ jobs:
       - name: Get service URL
         id: service-url
         run: |
-          LOAD_BALANCER_DNS=$(aws cloudformation describe-stacks \
+          SERVICE_URL=$(aws cloudformation describe-stacks \
             --stack-name "Eloquent-ECS-${{ env.ENVIRONMENT }}" \
-            --query 'Stacks[0].Outputs[?OutputKey==`LoadBalancerDNS`].OutputValue' \
+            --query 'Stacks[0].Outputs[?OutputKey==`ServiceUrl`].OutputValue' \
             --output text)
-          echo "SERVICE_URL=http://$LOAD_BALANCER_DNS" >> $GITHUB_OUTPUT
-          echo "Service URL: http://$LOAD_BALANCER_DNS"
+          echo "SERVICE_URL=$SERVICE_URL" >> $GITHUB_OUTPUT
+          echo "Service URL: $SERVICE_URL"
 
       - name: Test health endpoint
         run: |
@@ -99,11 +99,14 @@ jobs:
 
           # Test health endpoint with retries
           for i in {1..5}; do
-            if curl -f -s "$SERVICE_URL/health"; then
+            RESPONSE=$(curl -f -s "$SERVICE_URL/health" || echo "")
+            if echo "$RESPONSE" | grep -q '"status":"healthy"'; then
               echo "✅ Health check passed"
+              echo "Response: $RESPONSE"
               exit 0
             fi
             echo "Attempt $i failed, retrying in 10s..."
+            echo "Response was: $RESPONSE"
             sleep 10
           done
 

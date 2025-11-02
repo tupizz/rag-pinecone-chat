@@ -93,11 +93,14 @@ jobs:
 
           # Test health endpoint with retries
           for i in {1..5}; do
-            if curl -f -s "$SERVICE_URL/health"; then
+            RESPONSE=$(curl -f -s "$SERVICE_URL/health" || echo "")
+            if echo "$RESPONSE" | grep -q '"status":"healthy"'; then
               echo "✅ Health check passed"
+              echo "Response: $RESPONSE"
               exit 0
             fi
             echo "Attempt $i failed, retrying in 10s..."
+            echo "Response was: $RESPONSE"
             sleep 10
           done
 
