@@ -5,21 +5,21 @@ A full-stack AI-powered chatbot application with Retrieval-Augmented Generation 
 ## Architecture Overview
 
 - **Backend**: FastAPI (Python) with async support
-- **Frontend**: Next.js 14 (TypeScript) with App Router
-- **Database**: MongoDB for chat history and user sessions
-- **Vector Database**: Pinecone for FAQ knowledge base
+- **Frontend**: Next.js 16 (TypeScript) with App Router and React 19
+- **Database**: MongoDB (local development) / MongoDB Atlas (production)
+- **Vector Database**: Pinecone for knowledge base storage
 - **AI Model**: OpenAI GPT-5 with RAG for accurate responses
 - **Authentication**: JWT-based auth with anonymous user support
 - **Deployment**: AWS ECS/Fargate with Infrastructure as Code (CDK)
 
 ## Features
 
-✅ **RAG-Powered Responses** - Retrieves relevant FAQ context before generating answers
-✅ **Session Persistence** - Chat history saved for both anonymous and authenticated users
-✅ **Anonymous Users** - Start chatting immediately without signup
-✅ **User Authentication** - Register and login to access chat history across devices
-✅ **Streaming Responses** - Real-time AI response streaming for better UX
-✅ **Multi-Category FAQs** - Organized knowledge base across 5 fintech categories
+✅ **RAG-Powered Responses** - Retrieves relevant context from knowledge base before generating answers  
+✅ **Session Persistence** - Chat history saved for both anonymous and authenticated users  
+✅ **Anonymous Users** - Start chatting immediately without signup  
+✅ **User Authentication** - Register and login to access chat history across devices  
+✅ **Streaming Responses** - Real-time AI response streaming for better UX  
+✅ **Knowledge Base Management** - Browse and search documents in Pinecone (authenticated users)  
 ✅ **Production Ready** - Docker containers, health checks, and AWS deployment
 
 ## Project Structure
@@ -34,27 +34,28 @@ eloquent-ai-chatbot/
 │   │   ├── services/          # RAG, embeddings, vector search
 │   │   └── db/                # MongoDB connection
 │   ├── pyproject.toml         # Python dependencies (uv)
-│   ├── Dockerfile             # Multi-stage Docker build
-│   └── test_api.py            # API tests
+│   ├── requirements.txt       # Python dependencies
+│   └── Dockerfile             # Multi-stage Docker build
 ├── frontend/                   # Next.js frontend
 │   ├── src/
 │   │   ├── app/               # Next.js app router
 │   │   ├── components/        # React components
 │   │   ├── hooks/             # Custom React hooks
 │   │   └── lib/               # API client, utilities
-│   ├── package.json
-│   └── Dockerfile
+│   └── package.json
 ├── infrastructure/             # AWS CDK (TypeScript)
-│   ├── lib/
-│   │   ├── network-stack.ts   # VPC, subnets, security groups
-│   │   ├── database-stack.ts  # DocumentDB cluster
-│   │   ├── compute-stack.ts   # ECS/Fargate, ALB
-│   │   └── frontend-stack.ts  # S3, CloudFront, Route 53
+│   ├── lib/stacks/
+│   │   ├── vpc-stack.ts       # VPC, subnets, security groups
+│   │   ├── ecs-stack.ts       # ECS/Fargate, ALB, auto-scaling
+│   │   ├── ecr-stack.ts       # Container registry
+│   │   ├── secrets-stack.ts   # Secrets Manager
+│   │   └── dns-stack.ts       # Route 53, SSL certificates
 │   └── bin/app.ts
-├── data/                       # FAQ knowledge base
-│   └── faq.json               # 30+ fintech FAQs
-├── scripts/
-│   └── ingest_faq.py          # Pinecone ingestion script
+├── data/                       # Knowledge base
+│   ├── wise_help_articles.json       # Wise help articles (part 1)
+│   └── wise_help_articles_part2.json # Wise help articles (part 2)
+├── backend/scripts/
+│   └── ingest_wise_articles.py # Pinecone ingestion script
 ├── docker-compose.yml          # Local development environment
 └── README.md
 ```
@@ -62,7 +63,7 @@ eloquent-ai-chatbot/
 ## Prerequisites
 
 - **Python 3.11+** with [uv](https://github.com/astral-sh/uv) package manager
-- **Node.js 18+** and npm/yarn
+- **Node.js 20+** and npm/yarn
 - **Docker** and Docker Compose
 - **OpenAI API Key** - [Get one here](https://platform.openai.com/api-keys)
 - **Pinecone API Key** - [Sign up here](https://www.pinecone.io/)
@@ -75,13 +76,16 @@ eloquent-ai-chatbot/
 git clone <your-repo>
 cd eloquent-ai-chatbot
 
-# Copy environment template
-cp .env.example backend/.env
+# Copy environment templates
+cp backend/copy.env backend/.env
+cp frontend/copy.env.local frontend/.env.local
 
 # Edit backend/.env and add your API keys:
 # - OPENAI_API_KEY
 # - PINECONE_API_KEY
 # - PINECONE_ENVIRONMENT (e.g., us-east-1)
+# - PINECONE_INDEX_NAME
+# - JWT_SECRET_KEY (min 32 characters)
 ```
 
 ### 2. Backend Setup (with uv)
@@ -95,10 +99,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Create virtual environment and install dependencies
 uv venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-uv pip install -e .
-
-# Verify installation
-python test_api.py
+uv pip install -r requirements.txt
 ```
 
 ### 3. Start MongoDB
@@ -111,24 +112,25 @@ docker compose up -d mongodb
 docker ps | grep mongo
 ```
 
-### 4. Ingest FAQ Data into Pinecone
+### 4. Ingest Knowledge Base into Pinecone
 
 ```bash
 cd backend
 source .venv/bin/activate
-python ../scripts/ingest_faq.py
+
+# Dry run (validates files without uploading)
+python scripts/ingest_wise_articles.py
+
+# Actual upload to Pinecone
+python scripts/ingest_wise_articles.py --live
 ```
 
-Expected output:
+The script will:
 
-```
-🚀 Starting FAQ ingestion process...
-📊 Initializing Pinecone index...
-📖 Loading FAQ data from data/faq.json...
-✅ Loaded 30 FAQ items
-⬆️  Uploading documents to Pinecone...
-✅ Ingestion complete!
-```
+- Load articles from `data/wise_help_articles.json` and `data/wise_help_articles_part2.json`
+- Validate document structure
+- Generate embeddings and upload to Pinecone
+- Display statistics about the uploaded knowledge base
 
 ### 5. Start the Backend Server
 
@@ -141,7 +143,7 @@ python -m uvicorn app.main:app --reload
 # API docs available at http://localhost:8000/docs
 ```
 
-### 6. Frontend Setup (Coming Next)
+### 6. Frontend Setup
 
 ```bash
 cd frontend
@@ -169,9 +171,21 @@ npm run dev
 
 - `POST /api/chat` - Send message and get AI response
 - `POST /api/chat/stream` - Send message with streaming response
-- `GET /api/chat/sessions` - List all sessions
-- `GET /api/chat/sessions/{session_id}/messages` - Get session messages
+- `GET /api/chat/sessions` - List all sessions for current user
+- `GET /api/chat/sessions/{session_id}/messages` - Get session messages with pagination
 - `DELETE /api/chat/sessions/{session_id}` - Delete session
+
+### Documents (Authenticated)
+
+- `GET /api/documents` - List documents in knowledge base
+- `GET /api/documents/stats` - Get Pinecone index statistics
+
+### Admin (Authenticated)
+
+- `GET /api/admin/documents` - Get index overview
+- `GET /api/admin/documents/search-all` - Search documents with generic queries
+- `GET /api/admin/documents/stats` - Get detailed index statistics
+- `POST /api/admin/documents/test-search` - Test search with custom query
 
 ## Testing the Backend
 
@@ -184,7 +198,7 @@ curl http://localhost:8000/health
 # Create a chat session and send a message
 curl -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "How do I create an account?"}'
+  -d '{"message": "How do I send money internationally?"}'
 
 # Register a user
 curl -X POST http://localhost:8000/api/auth/register \
@@ -194,30 +208,30 @@ curl -X POST http://localhost:8000/api/auth/register \
     "password": "securepassword123",
     "full_name": "John Doe"
   }'
-```
 
-### Running Tests
-
-```bash
-cd backend
-source .venv/bin/activate
-python test_api.py
+# Login and get token
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "securepassword123"
+  }'
 ```
 
 ## Environment Variables
 
 ### Backend (.env)
 
-| Variable               | Description        | Example                     |
-| ---------------------- | ------------------ | --------------------------- |
-| `OPENAI_API_KEY`       | OpenAI API key     | `sk-...`                    |
-| `OPENAI_MODEL`         | Model to use       | `gpt-5-chat-latest`         |
-| `PINECONE_API_KEY`     | Pinecone API key   | `...`                       |
-| `PINECONE_ENVIRONMENT` | Pinecone region    | `us-east-1`                 |
-| `PINECONE_INDEX_NAME`  | Index name         | `eloquent-faq-index`        |
-| `MONGODB_URL`          | MongoDB connection | `mongodb://localhost:27017` |
-| `JWT_SECRET_KEY`       | JWT signing key    | Min 32 characters           |
-| `ALLOWED_ORIGINS_STR`  | CORS origins       | `http://localhost:3000`     |
+| Variable               | Description        | Example                                |
+| ---------------------- | ------------------ | -------------------------------------- |
+| `OPENAI_API_KEY`       | OpenAI API key     | `sk-...`                               |
+| `OPENAI_MODEL`         | Model to use       | `gpt-5-chat-latest`                    |
+| `PINECONE_API_KEY`     | Pinecone API key   | `...`                                  |
+| `PINECONE_ENVIRONMENT` | Pinecone region    | `us-east-1`                            |
+| `PINECONE_INDEX_NAME`  | Index name         | `ai-powered-chatbot-challenge-omkb0qe` |
+| `MONGODB_URL`          | MongoDB connection | `mongodb://localhost:27017`            |
+| `JWT_SECRET_KEY`       | JWT signing key    | Min 32 characters                      |
+| `ALLOWED_ORIGINS_STR`  | CORS origins       | `http://localhost:3000`                |
 
 ### Frontend (.env.local)
 
@@ -230,7 +244,8 @@ python test_api.py
 ### Development
 
 ```bash
-# Start all services (MongoDB + Backend + Frontend)
+# Start all services (MongoDB + Backend)
+# Note: Frontend is not included in docker-compose, run separately with npm
 docker compose up -d
 
 # View logs
@@ -243,49 +258,71 @@ docker compose down
 ### Production Build
 
 ```bash
-# Build production backend image
-cd backend
-docker build -t eloquent-backend:latest --target production .
-
-# Build production frontend image
-cd frontend
-docker build -t eloquent-frontend:latest --target production .
+# Build production backend image (from project root)
+docker build -f backend/Dockerfile -t eloquent-backend:latest --target production .
 ```
+
+**Note**: Frontend doesn't have a Dockerfile. For production, deploy to Vercel or build with `npm run build`.
 
 ## AWS Deployment (CDK)
 
-Full AWS deployment guide coming soon. The infrastructure includes:
+The infrastructure code is located in the `infrastructure/` directory. See `infrastructure/CDK_DEPLOYMENT.md` for detailed deployment instructions.
 
-- **Network**: VPC with public/private subnets across 2 AZs
-- **Database**: DocumentDB cluster (MongoDB-compatible)
-- **Compute**: ECS Fargate cluster with auto-scaling
-- **Load Balancer**: ALB with SSL/TLS termination
-- **Frontend**: S3 + CloudFront CDN
-- **Secrets**: AWS Secrets Manager for API keys
-- **Monitoring**: CloudWatch Logs and Alarms
+The deployment includes:
+
+- **Network (VPC Stack)**: VPC with public/private subnets across 2 AZs
+- **Container Registry (ECR Stack)**: ECR repository for Docker images
+- **Secrets (Secrets Stack)**: AWS Secrets Manager for API keys and credentials
+- **Compute (ECS Stack)**:
+  - ECS Fargate cluster with auto-scaling (1-4 tasks)
+  - Application Load Balancer with health checks
+  - CloudWatch Logs and Alarms
+  - Auto-scaling based on CPU/memory utilization
+- **DNS (DNS Stack)**: Route 53 and ACM SSL certificates
+- **Database**: MongoDB Atlas (managed externally, connection string in Secrets Manager)
+
+**Note**: The frontend is deployed separately (not included in CDK infrastructure)
 
 ## How RAG Works
 
-1. **User sends a question** → "How do I reset my password?"
-2. **Embedding generation** → OpenAI creates vector embedding of the question
-3. **Vector search** → Pinecone finds top 5 most similar FAQ entries
-4. **Context retrieval** → Relevant FAQ text is extracted
-5. **Prompt construction** → Question + Context sent to GPT-5
+1. **User sends a question** → "How do I send money internationally?"
+2. **Embedding generation** → OpenAI creates vector embedding of the question (text-embedding-ada-002)
+3. **Vector search** → Pinecone finds top 3 most similar articles (similarity threshold: 0.75)
+4. **Context retrieval** → Relevant article text is extracted
+5. **Prompt construction** → Question + Context + Conversation History sent to GPT-5
 6. **Response generation** → AI generates accurate, context-aware answer
-7. **Source attribution** → Response includes FAQ source references
+7. **Source attribution** → Response includes source references with metadata
 
 This prevents hallucinations and ensures answers are grounded in your knowledge base!
 
 ## Development Workflow
 
-### Adding New FAQs
+### Adding New Articles to Knowledge Base
 
-1. Edit `data/faq.json` and add new entries
-2. Run the ingestion script:
-   ```bash
-   python scripts/ingest_faq.py
+1. Add new articles to `data/wise_help_articles.json` or create a new JSON file
+2. Follow the document structure:
+   ```json
+   {
+     "documents": [
+       {
+         "id": "unique-id",
+         "text": "Full article text for embedding",
+         "metadata": {
+           "category": "Category Name",
+           "question": "Article question/title",
+           "answer": "Full answer text",
+           "source": "Source URL or identifier"
+         }
+       }
+     ]
+   }
    ```
-3. Test with relevant questions
+3. Run the ingestion script:
+   ```bash
+   cd backend
+   python scripts/ingest_wise_articles.py --live
+   ```
+4. Test with relevant questions in the chat interface
 
 ### Backend Development
 
@@ -298,9 +335,6 @@ uv pip install <package>
 
 # Run with auto-reload
 uvicorn app.main:app --reload
-
-# Format code
-black app/
 ```
 
 ### Frontend Development
@@ -314,8 +348,8 @@ npm install <package>
 # Run dev server
 npm run dev
 
-# Type checking
-npm run type-check
+# Build for production
+npm run build
 
 # Lint
 npm run lint
@@ -340,7 +374,7 @@ docker compose logs mongodb
 
 - Verify your `PINECONE_API_KEY` is correct
 - Check `PINECONE_ENVIRONMENT` matches your Pinecone dashboard
-- Ensure index exists: run `python scripts/ingest_faq.py`
+- Ensure index exists: run `python backend/scripts/ingest_wise_articles.py --live`
 
 ### OpenAI API Issues
 
