@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api';
 import type { User, AuthState, LoginRequest, RegisterRequest } from '@/types';
 
@@ -20,6 +21,7 @@ const MESSAGE_COUNT_KEY = 'anonymous_message_count';
 const SESSION_ID_KEY = 'eloquent_session_id';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
   const [state, setState] = useState<AuthState>({
     user: null,
     isAuthenticated: false,
@@ -62,6 +64,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       // Clear anonymous data
       localStorage.removeItem(MESSAGE_COUNT_KEY);
+      // Refetch sessions to load user's sessions
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
     } catch (error) {
       throw error;
     }
@@ -90,6 +94,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Clear anonymous data
       localStorage.removeItem(MESSAGE_COUNT_KEY);
       localStorage.removeItem(SESSION_ID_KEY);
+      // Refetch sessions to load user's sessions
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
     } catch (error) {
       throw error;
     }
@@ -104,6 +110,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       anonymousMessageCount: parseInt(localStorage.getItem(MESSAGE_COUNT_KEY) || '0', 10),
       loading: false,
     });
+    // Refetch sessions to show anonymous sessions (or empty list)
+    queryClient.invalidateQueries({ queryKey: ['sessions'] });
   };
 
   const incrementMessageCount = () => {
